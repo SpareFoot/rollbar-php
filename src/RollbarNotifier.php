@@ -15,79 +15,78 @@ class RollbarNotifier {
     const VERSION = '0.15.0';
 
     // required
-    public $access_token = '';
+    public $accessToken = '';
 
     // optional / defaults
-    public $base_api_url = 'https://api.rollbar.com/api/1/';
-    public $batch_size = 50;
+    public $baseApiUrl = 'https://api.rollbar.com/api/1/';
+    public $batchSize = 50;
     public $batched = true;
     public $branch = null;
-    public $capture_error_backtraces = true;
-    public $code_version = null;
+    public $captureErrorBacktraces = true;
+    public $codeVersion = null;
     public $environment = 'production';
-    public $error_sample_rates = array();
+    public $errorSampleRates = array();
     // available handlers: blocking, agent
     public $handler = 'blocking';
-    public $agent_log_location = '/var/tmp';
+    public $agentLogLocation = '/var/tmp';
     public $host = null;
     /** @var iRollbarLogger */
     public $logger = null;
-    public $included_errno = ROLLBAR_INCLUDED_ERRNO_BITMASK;
+    public $includedErrno = ROLLBAR_INCLUDED_ERRNO_BITMASK;
     public $person = null;
-    public $person_fn = null;
+    public $personFn = null;
     public $root = '';
-    public $scrub_fields = array('passwd', 'pass', 'password', 'secret', 'confirm_password',
-        'password_confirmation', 'auth_token', 'csrf_token');
-    public $shift_function = true;
+    public $scrubFields = array('passwd', 'pass', 'password', 'secret', 'confirm_password', 'password_confirmation', 'auth_token', 'csrf_token');
+    public $shiftFunction = true;
     public $timeout = 3;
-    public $report_suppressed = false;
-    public $use_error_reporting = false;
+    public $reportSuppressed = false;
+    public $useErrorReporting = false;
     public $proxy = null;
-    public $include_error_code_context = false;
-    public $include_exception_code_context = false;
+    public $includeErrorCodeContext = false;
+    public $includeExceptionCodeContext = false;
 
-    private $config_keys = array('access_token', 'base_api_url', 'batch_size', 'batched', 'branch',
-        'capture_error_backtraces', 'code_version', 'environment', 'error_sample_rates', 'handler',
-        'agent_log_location', 'host', 'logger', 'included_errno', 'person', 'person_fn', 'root',
-        'scrub_fields', 'shift_function', 'timeout', 'report_suppressed', 'use_error_reporting', 'proxy',
-        'include_error_code_context', 'include_exception_code_context');
+    private $configKeys = array('accessToken', 'baseApiUrl', 'batchSize', 'batched', 'branch',
+        'captureErrorBacktraces', 'codeVersion', 'environment', 'errorSampleRates', 'handler',
+        'agentLogLocation', 'host', 'logger', 'includedErrno', 'person', 'personFn', 'root',
+        'scrubFields', 'shiftFunction', 'timeout', 'reportSuppressed', 'useErrorReporting', 'proxy',
+        'includeErrorCodeContext', 'includeExceptionCodeContext');
 
     // cached values for request/server/person data
-    private $_php_context = null;
-    private $_request_data = null;
-    private $_server_data = null;
-    private $_person_data = null;
+    private $_phpContext = null;
+    private $_requestData = null;
+    private $_serverData = null;
+    private $_personData = null;
 
     // payload queue, used when $batched is true
     private $_queue = array();
 
     // file handle for agent log
-    private $_agent_log = null;
+    private $_agentLog = null;
 
-    private $_iconv_available = null;
+    private $_iconvAvailable = null;
 
-    private $_mt_randmax;
+    private $_mtRandmax;
 
-    private $_curl_ipresolve_supported;
+    private $_curlIpResolveSupported;
 
-    /** @var iSourceFileReader $_source_file_reader */
-    private $_source_file_reader;
+    /** @var SourceFileReader */
+    private $_sourceFileReader;
 
     public function __construct($config) {
-        foreach ($this->config_keys as $key) {
+        foreach ($this->configKeys as $key) {
             if (isset($config[$key])) {
+                #$camelCasedKey = lcfirst(ucwords(strtr($key, '_', ' ')));
                 $this->$key = $config[$key];
             }
         }
-        $this->_source_file_reader = new SourceFileReader();
+        $this->_sourceFileReader = new SourceFileReader();
 
-        if (!$this->access_token && $this->handler != 'agent') {
-            $this->log_error('Missing access token');
+        if (!$this->accessToken && $this->handler != 'agent') {
+            $this->logError('Missing access token');
         }
 
-        // fill in missing values in error_sample_rates
-        $levels = array(E_WARNING, E_NOTICE, E_USER_ERROR, E_USER_WARNING,
-            E_USER_NOTICE, E_STRICT, E_RECOVERABLE_ERROR);
+        // fill in missing values in errorSampleRates
+        $levels = array(E_WARNING, E_NOTICE, E_USER_ERROR, E_USER_WARNING, E_USER_NOTICE, E_STRICT, E_RECOVERABLE_ERROR);
 
         // PHP 5.3.0
         if (defined('E_DEPRECATED')) {
@@ -95,56 +94,56 @@ class RollbarNotifier {
         }
 
         // PHP 5.3.0
-        $this->_curl_ipresolve_supported = defined('CURLOPT_IPRESOLVE');
+        $this->_curlIpResolveSupported = defined('CURLOPT_IPRESOLVE');
 
         $curr = 1;
         for ($i = 0, $num = count($levels); $i < $num; $i++) {
             $level = $levels[$i];
-            if (isset($this->error_sample_rates[$level])) {
-                $curr = $this->error_sample_rates[$level];
+            if (isset($this->errorSampleRates[$level])) {
+                $curr = $this->errorSampleRates[$level];
             } else {
-                $this->error_sample_rates[$level] = $curr;
+                $this->errorSampleRates[$level] = $curr;
             }
         }
 
         // cache this value
-        $this->_mt_randmax = mt_getrandmax();
+        $this->_mtRandmax = mt_getrandmax();
     }
 
-    public function report_exception($exc, $extra_data = null, $payload_data = null) {
+    public function reportException($exc, $extraData = null, $payloadData = null) {
         try {
-            if ( !is_a( $exc, BASE_EXCEPTION ) ) {
-                throw new Exception(sprintf('Report exception requires an instance of %s.', BASE_EXCEPTION ));
+            if (!is_a($exc, BASE_EXCEPTION)) {
+                throw new Exception(sprintf('Report exception requires an instance of %s.', BASE_EXCEPTION));
             }
 
-            return $this->_report_exception($exc, $extra_data, $payload_data);
+            return $this->_reportException($exc, $extraData, $payloadData);
         } catch (Exception $e) {
             try {
-                $this->log_error("Exception while reporting exception");
+                $this->logError('Exception while reporting exception');
             } catch (Exception $e) {
                 // swallow
             }
         }
     }
 
-    public function report_message($message, $level = Level::ERROR, $extra_data = null, $payload_data = null) {
+    public function reportMessage($message, $level = Level::ERROR, $extraData = null, $payloadData = null) {
         try {
-            return $this->_report_message($message, $level, $extra_data, $payload_data);
+            return $this->_reportMessage($message, $level, $extraData, $payloadData);
         } catch (Exception $e) {
             try {
-                $this->log_error("Exception while reporting message");
+                $this->logError('Exception while reporting message');
             } catch (Exception $e) {
                 // swallow
             }
         }
     }
 
-    public function report_php_error($errno, $errstr, $errfile, $errline) {
+    public function reportPhpError($errno, $errstr, $errfile, $errline) {
         try {
-            return $this->_report_php_error($errno, $errstr, $errfile, $errline);
+            return $this->_reportPhpError($errno, $errstr, $errfile, $errline);
         } catch (Exception $e) {
             try {
-                $this->log_error("Exception while reporting php error");
+                $this->logError('Exception while reporting php error');
             } catch (Exception $e) {
                 // swallow
             }
@@ -153,14 +152,14 @@ class RollbarNotifier {
 
     /**
      * Flushes the queue.
-     * Called internally when the queue exceeds $batch_size, and by Rollbar::flush
+     * Called internally when the queue exceeds $batchSize, and by Rollbar::flush
      * on shutdown.
      */
     public function flush() {
-        $queue_size = $this->queueSize();
-        if ($queue_size > 0) {
-            $this->log_info('Flushing queue of size ' . $queue_size);
-            $this->send_batch($this->_queue);
+        $queueSize = $this->queueSize();
+        if ($queueSize > 0) {
+            $this->logInfo('Flushing queue of size ' . $queueSize);
+            $this->sendBatch($this->_queue);
             $this->_queue = array();
         }
     }
@@ -174,66 +173,69 @@ class RollbarNotifier {
 
     /**
      * @param \Throwable|\Exception $exc
+     * @param array $extraData
+     * @param array $payloadData
+     * @return string UUID
      */
-    protected function _report_exception($exc, $extra_data = null, $payload_data = null) {
-        if (!$this->check_config()) {
+    protected function _reportException($exc, $extraData = null, $payloadData = null) {
+        if (!$this->checkConfig()) {
             return;
         }
 
-        if (error_reporting() === 0 && !$this->report_suppressed) {
+        if (error_reporting() === 0 && !$this->reportSuppressed) {
             // ignore
             return;
         }
 
-        $data = $this->build_base_data();
+        $data = $this->buildBaseData();
 
-        $trace_chain = $this->build_exception_trace_chain($exc, $extra_data);
+        $traceChain = $this->buildExceptionTraceChain($exc, $extraData);
 
-        if (count($trace_chain) > 1) {
-            $data['body']['trace_chain'] = $trace_chain;
+        if (count($traceChain) > 1) {
+            $data['body']['trace_chain'] = $traceChain;
         } else {
-            $data['body']['trace'] = $trace_chain[0];
+            $data['body']['trace'] = $traceChain[0];
         }
 
         // request, server, person data
-        if ('http' === $this->_php_context) {
-            $data['request'] = $this->build_request_data();
+        if ('http' === $this->_phpContext) {
+            $data['request'] = $this->buildRequestData();
         }
-        $data['server'] = $this->build_server_data();
-        $data['person'] = $this->build_person_data();
+        $data['server'] = $this->buildServerData();
+        $data['person'] = $this->buildPersonData();
 
-        // merge $payload_data into $data
+        // merge $payloadData into $data
         // (overriding anything already present)
-        if ($payload_data !== null && is_array($payload_data)) {
-            foreach ($payload_data as $key => $val) {
+        if ($payloadData !== null && is_array($payloadData)) {
+            foreach ($payloadData as $key => $val) {
                 $data[$key] = $val;
             }
         }
 
-        $data = $this->_sanitize_keys($data);
-        array_walk_recursive($data, array($this, '_sanitize_utf8'));
+        $data = $this->_sanitizeKeys($data);
+        array_walk_recursive($data, array($this, '_sanitizeUtf8'));
 
-        $payload = $this->build_payload($data);
-        $this->send_payload($payload);
+        $payload = $this->buildPayload($data);
+        $this->sendPayload($payload);
 
         return $data['uuid'];
     }
 
-    protected function _sanitize_utf8(&$value) {
-        if (!isset($this->_iconv_available)) {
-            $this->_iconv_available = function_exists('iconv');
+    protected function _sanitizeUtf8(&$value) {
+        if (!isset($this->_iconvAvailable)) {
+            $this->_iconvAvailable = function_exists('iconv');
         }
-        if (is_string($value) && $this->_iconv_available) {
+        if (is_string($value) && $this->_iconvAvailable) {
             $value = @iconv('UTF-8', 'UTF-8//IGNORE', $value);
         }
     }
 
-    protected function _sanitize_keys(array $data) {
+    protected function _sanitizeKeys(array $data) {
         $response = array();
         foreach ($data as $key => $value) {
-            $this->_sanitize_utf8($key);
+            $this->_sanitizeUtf8($key);
             if (is_array($value)) {
-                $response[$key] = $this->_sanitize_keys($value);
+                $response[$key] = $this->_sanitizeKeys($value);
             } else {
                 $response[$key] = $value;
             }
@@ -242,37 +244,37 @@ class RollbarNotifier {
         return $response;
     }
 
-    protected function _report_php_error($errno, $errstr, $errfile, $errline) {
-        if (!$this->check_config()) {
+    protected function _reportPhpError($errno, $errstr, $errfile, $errline) {
+        if (!$this->checkConfig()) {
             return;
         }
 
-        if (error_reporting() === 0 && !$this->report_suppressed) {
+        if (error_reporting() === 0 && !$this->reportSuppressed) {
             // ignore
             return;
         }
 
-        if ($this->use_error_reporting && (error_reporting() & $errno) === 0) {
+        if ($this->useErrorReporting && (error_reporting() & $errno) === 0) {
             // ignore
             return;
         }
 
-        if ($this->included_errno != -1 && ($errno & $this->included_errno) != $errno) {
+        if ($this->includedErrno != -1 && ($errno & $this->includedErrno) != $errno) {
             // ignore
             return;
         }
 
-        if (isset($this->error_sample_rates[$errno])) {
+        if (isset($this->errorSampleRates[$errno])) {
             // get a float in the range [0, 1)
             // mt_rand() is inclusive, so add 1 to mt_randmax
-            $float_rand = mt_rand() / ($this->_mt_randmax + 1);
-            if ($float_rand > $this->error_sample_rates[$errno]) {
+            $floatRand = mt_rand() / ($this->_mtRandmax + 1);
+            if ($floatRand > $this->errorSampleRates[$errno]) {
                 // skip
                 return;
             }
         }
 
-        $data = $this->build_base_data();
+        $data = $this->buildBaseData();
 
         // set error level and error constant name
         $level = Level::INFO;
@@ -326,121 +328,123 @@ class RollbarNotifier {
         $data['level'] = $level;
 
         // use the whole $errstr. may want to split this by colon for better de-duping.
-        $error_class = $constant . ': ' . $errstr;
+        $errorClass = $constant . ': ' . $errstr;
 
         // build something that looks like an exception
         $data['body'] = array(
             'trace' => array(
-                'frames' => $this->build_error_frames($errfile, $errline),
+                'frames' => $this->buildErrorFrames($errfile, $errline),
                 'exception' => array(
-                    'class' => $error_class
+                    'class' => $errorClass
                 )
             )
         );
 
         // request, server, person data
-        $data['request'] = $this->build_request_data();
-        $data['server'] = $this->build_server_data();
-        $data['person'] = $this->build_person_data();
+        $data['request'] = $this->buildRequestData();
+        $data['server'] = $this->buildServerData();
+        $data['person'] = $this->buildPersonData();
 
-        array_walk_recursive($data, array($this, '_sanitize_utf8'));
+        array_walk_recursive($data, array($this, '_sanitizeUtf8'));
 
-        $payload = $this->build_payload($data);
-        $this->send_payload($payload);
+        $payload = $this->buildPayload($data);
+        $this->sendPayload($payload);
 
         return $data['uuid'];
     }
 
-    protected function _report_message($message, $level, $extra_data, $payload_data) {
-        if (!$this->check_config()) {
+    protected function _reportMessage($message, $level, $extraData, $payloadData) {
+        if (!$this->checkConfig()) {
             return;
         }
 
-        $data = $this->build_base_data();
+        $data = $this->buildBaseData();
         $data['level'] = strtolower($level);
 
-        $message_obj = array('body' => $message);
-        if ($extra_data !== null && is_array($extra_data)) {
-            // merge keys from $extra_data to $message_obj
-            foreach ($extra_data as $key => $val) {
+        $messageObj = array('body' => $message);
+        if ($extraData !== null && is_array($extraData)) {
+            // merge keys from $extraData to $messageObj
+            foreach ($extraData as $key => $val) {
                 if ($key == 'body') {
                     // rename to 'body_' to avoid clobbering
                     $key = 'body_';
                 }
-                $message_obj[$key] = $val;
+                $messageObj[$key] = $val;
             }
         }
-        $data['body']['message'] = $message_obj;
+        $data['body']['message'] = $messageObj;
 
-        $data['request'] = $this->build_request_data();
-        $data['server'] = $this->build_server_data();
-        $data['person'] = $this->build_person_data();
+        $data['request'] = $this->buildRequestData();
+        $data['server'] = $this->buildServerData();
+        $data['person'] = $this->buildPersonData();
 
         // merge $payload_data into $data
         // (overriding anything already present)
-        if ($payload_data !== null && is_array($payload_data)) {
-            foreach ($payload_data as $key => $val) {
+        if ($payloadData !== null && is_array($payloadData)) {
+            foreach ($payloadData as $key => $val) {
                 $data[$key] = $val;
             }
         }
 
-        array_walk_recursive($data, array($this, '_sanitize_utf8'));
+        array_walk_recursive($data, array($this, '_sanitizeUtf8'));
 
-        $payload = $this->build_payload($data);
-        $this->send_payload($payload);
+        $payload = $this->buildPayload($data);
+        $this->sendPayload($payload);
 
         return $data['uuid'];
     }
 
-    protected function check_config() {
-        return $this->handler == 'agent' || ($this->access_token && strlen($this->access_token) == 32);
+    protected function checkConfig() {
+        return $this->handler == 'agent' || ($this->accessToken && strlen($this->accessToken) == 32);
     }
 
-    protected function build_request_data() {
-        if ($this->_request_data === null) {
+    protected function buildRequestData() {
+        if ($this->_requestData === null) {
             $request = array(
-                'url' => $this->scrub_url($this->current_url()),
-                'user_ip' => $this->user_ip(),
+                'url' => $this->scrubUrl($this->currentUrl()),
+                'user_ip' => $this->userIp(),
                 'headers' => $this->headers(),
                 'method' => isset($_SERVER['REQUEST_METHOD']) ? $_SERVER['REQUEST_METHOD'] : null,
             );
 
             if ($_GET) {
-                $request['GET'] = $this->scrub_request_params($_GET);
+                $request['GET'] = $this->scrubRequestParams($_GET);
             }
             if ($_POST) {
-                $request['POST'] = $this->scrub_request_params($_POST);
+                $request['POST'] = $this->scrubRequestParams($_POST);
             }
             if (isset($_SESSION) && $_SESSION) {
-                $request['session'] = $this->scrub_request_params($_SESSION);
+                $request['session'] = $this->scrubRequestParams($_SESSION);
             }
-            $this->_request_data = $request;
+            $this->_requestData = $request;
         }
 
-        return $this->_request_data;
+        return $this->_requestData;
     }
 
-    protected function scrub_url($url) {
-        $url_query = parse_url($url, PHP_URL_QUERY);
-        if (!$url_query) return $url;
-        parse_str($url_query, $parsed_output);
+    protected function scrubUrl($url) {
+        $urlQuery = parse_url($url, PHP_URL_QUERY);
+        if (!$urlQuery) {
+            return $url;
+        }
+        parse_str($urlQuery, $parsedOutput);
         // using x since * requires URL-encoding
-        $scrubbed_params = $this->scrub_request_params($parsed_output, 'x');
-        $scrubbed_url = str_replace($url_query, http_build_query($scrubbed_params), $url);
-        return $scrubbed_url;
+        $scrubbedParams = $this->scrubRequestParams($parsedOutput, 'x');
+        $scrubbedUrl = str_replace($urlQuery, http_build_query($scrubbedParams), $url);
+        return $scrubbedUrl;
     }
 
-    protected function scrub_request_params($params, $replacement = '*') {
+    protected function scrubRequestParams($params, $replacement = '*') {
         $scrubbed = array();
-        $potential_regex_filters = array_filter($this->scrub_fields, function($field) {
+        $potentialRegexFilters = array_filter($this->scrubFields, function($field) {
             return strpos($field, '/') === 0;
         });
         foreach ($params as $k => $v) {
-            if ($this->_key_should_be_scrubbed($k, $potential_regex_filters)) {
+            if ($this->_keyShouldBeScrubbed($k, $potentialRegexFilters)) {
                 $scrubbed[$k] = $this->_scrub($v, $replacement);
             } elseif (is_array($v)) {
                 // recursively handle array params
-                $scrubbed[$k] = $this->scrub_request_params($v, $replacement);
+                $scrubbed[$k] = $this->scrubRequestParams($v, $replacement);
             } else {
                 $scrubbed[$k] = $v;
             }
@@ -449,10 +453,10 @@ class RollbarNotifier {
         return $scrubbed;
     }
 
-    protected function _key_should_be_scrubbed($key, $potential_regex_filters) {
-        if (in_array(strtolower($key), $this->scrub_fields, true)) return true;
-        foreach ($potential_regex_filters as $potential_regex) {
-            if (@preg_match($potential_regex, $key)) return true;
+    protected function _keyShouldBeScrubbed($key, $potentialRegexFilters) {
+        if (in_array(strtolower($key), $this->scrubFields, true)) return true;
+        foreach ($potentialRegexFilters as $potentialRegex) {
+            if (@preg_match($potentialRegex, $key)) return true;
         }
         return false;
     }
@@ -464,7 +468,7 @@ class RollbarNotifier {
 
     protected function headers() {
         $headers = array();
-        foreach ($this->scrub_request_params($_SERVER) as $key => $val) {
+        foreach ($this->scrubRequestParams($_SERVER) as $key => $val) {
             if (substr($key, 0, 5) == 'HTTP_') {
                 // convert HTTP_CONTENT_TYPE to Content-Type, HTTP_HOST to Host, etc.
                 $name = strtolower(substr($key, 5));
@@ -485,7 +489,7 @@ class RollbarNotifier {
         }
     }
 
-    protected function current_url() {
+    protected function currentUrl() {
         if (!empty($_SERVER['HTTP_X_FORWARDED_PROTO'])) {
             $proto = strtolower($_SERVER['HTTP_X_FORWARDED_PROTO']);
         } else if (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] == 'on') {
@@ -528,17 +532,19 @@ class RollbarNotifier {
         return $url;
     }
 
-    protected function user_ip() {
-        $forwardfor = isset($_SERVER['HTTP_X_FORWARDED_FOR']) ? $_SERVER['HTTP_X_FORWARDED_FOR'] : null;
-        if ($forwardfor) {
+    protected function userIp() {
+        $forwardFor = isset($_SERVER['HTTP_X_FORWARDED_FOR']) ? $_SERVER['HTTP_X_FORWARDED_FOR'] : null;
+        if ($forwardFor) {
             // return everything until the first comma
-            $parts = explode(',', $forwardfor);
+            $parts = explode(',', $forwardFor);
             return $parts[0];
         }
-        $realip = isset($_SERVER['HTTP_X_REAL_IP']) ? $_SERVER['HTTP_X_REAL_IP'] : null;
-        if ($realip) {
-            return $realip;
+
+        $realIp = isset($_SERVER['HTTP_X_REAL_IP']) ? $_SERVER['HTTP_X_REAL_IP'] : null;
+        if ($realIp) {
+            return $realIp;
         }
+
         return isset($_SERVER['REMOTE_ADDR']) ? $_SERVER['REMOTE_ADDR'] : null;
     }
 
@@ -547,20 +553,19 @@ class RollbarNotifier {
      * @param mixed $extra_data
      * @return array
      */
-    protected function build_exception_trace($exc, $extra_data = null)
-    {
+    protected function buildExceptionTrace($exc, $extraData = null) {
         $message = $exc->getMessage();
 
         $trace = array(
-            'frames' => $this->build_exception_frames($exc),
+            'frames' => $this->buildExceptionFrames($exc),
             'exception' => array(
                 'class' => get_class($exc),
-                'message' => !empty($message) ? $message : 'unknown',
-            ),
+                'message' => !empty($message) ? $message : 'unknown'
+            )
         );
 
-        if ($extra_data !== null) {
-            $trace['extra'] = $extra_data;
+        if ($extraData !== null) {
+            $trace['extra'] = $extraData;
         }
 
         return $trace;
@@ -568,18 +573,17 @@ class RollbarNotifier {
 
     /**
      * @param \Throwable|\Exception $exc
-     * @param array $extra_data
+     * @param array $extraData
      * @return array
      */
-    protected function build_exception_trace_chain( $exc, $extra_data = null)
-    {
+    protected function buildExceptionTraceChain($exc, $extraData = null) {
         $chain = array();
-        $chain[] = $this->build_exception_trace($exc, $extra_data);
+        $chain[] = $this->buildExceptionTrace($exc, $extraData);
 
         $previous = $exc->getPrevious();
 
-        while ( is_a( $previous, BASE_EXCEPTION ) ) {
-            $chain[] = $this->build_exception_trace($previous);
+        while (is_a($previous, BASE_EXCEPTION)) {
+            $chain[] = $this->buildExceptionTrace($previous);
             $previous = $previous->getPrevious();
         }
 
@@ -590,7 +594,7 @@ class RollbarNotifier {
      * @param \Throwable|\Exception $exc
      * @return array
      */
-    protected function build_exception_frames($exc) {
+    protected function buildExceptionFrames($exc) {
         $frames = array();
 
         foreach ($exc->getTrace() as $frame) {
@@ -600,8 +604,8 @@ class RollbarNotifier {
                 'method' => $frame['function']
                 // TODO include args? need to sanitize first.
             );
-            if($this->include_exception_code_context && isset($frame['file']) && isset($frame['line'])) {
-                $this->add_frame_code_context($frame['file'], $frame['line'], $framedata);
+            if($this->includeExceptionCodeContext && isset($frame['file']) && isset($frame['line'])) {
+                $this->addFrameCodeContext($frame['file'], $frame['line'], $framedata);
             }
             $frames[] = $framedata;
         }
@@ -616,18 +620,18 @@ class RollbarNotifier {
             'filename' => $file,
             'lineno' => $line
         );
-        if($this->include_exception_code_context) {
-            $this->add_frame_code_context($file, $line, $framedata);
+        if($this->includeExceptionCodeContext) {
+            $this->addFrameCodeContext($file, $line, $framedata);
         }
         $frames[] = $framedata;
 
-        $this->shift_method($frames);
+        $this->shiftMethod($frames);
 
         return $frames;
     }
 
-    protected function shift_method(&$frames) {
-        if ($this->shift_function) {
+    protected function shiftMethod(&$frames) {
+        if ($this->shiftFunction) {
             // shift 'method' values down one frame, so they reflect where the call
             // occurs (like Rollbar expects), instead of what is being called.
             for ($i = count($frames) - 1; $i > 0; $i--) {
@@ -637,8 +641,8 @@ class RollbarNotifier {
         }
     }
 
-    protected function build_error_frames($errfile, $errline) {
-        if ($this->capture_error_backtraces) {
+    protected function buildErrorFrames($errfile, $errline) {
+        if ($this->captureErrorBacktraces) {
             $frames = array();
             $backtrace = debug_backtrace();
             foreach ($backtrace as $frame) {
@@ -647,37 +651,37 @@ class RollbarNotifier {
                     continue;
                 }
                 // skip the confusing set_error_handler frame
-                if ($frame['function'] == 'report_php_error' && count($frames) == 0) {
+                if ($frame['function'] == 'reportPhpError' && count($frames) == 0) {
                     continue;
                 }
 
-                $framedata = array(
+                $frameData = array(
                     // Sometimes, file and line are not set. See:
                     // http://stackoverflow.com/questions/4581969/why-is-debug-backtrace-not-including-line-number-sometimes
-                    'filename' => isset($frame['file']) ? $frame['file'] : "<internal>",
+                    'filename' => isset($frame['file']) ? $frame['file'] : '<internal>',
                     'lineno' =>  isset($frame['line']) ? $frame['line'] : 0,
                     'method' => $frame['function']
                 );
-                if($this->include_error_code_context && isset($frame['file']) && isset($frame['line'])) {
-                    $this->add_frame_code_context($frame['file'], $frame['line'], $framedata);
+                if($this->includeErrorCodeContext && isset($frame['file']) && isset($frame['line'])) {
+                    $this->addFrameCodeContext($frame['file'], $frame['line'], $frameData);
                 }
-                $frames[] = $framedata;
+                $frames[] = $frameData;
             }
 
             // rollbar expects most recent call last, not first
             $frames = array_reverse($frames);
 
             // add top-level file and line to end of the reversed array
-            $framedata = array(
+            $frameData = array(
                 'filename' => $errfile,
                 'lineno' => $errline
             );
-            if($this->include_error_code_context) {
-                $this->add_frame_code_context($errfile, $errline, $framedata);
+            if($this->includeErrorCodeContext) {
+                $this->addFrameCodeContext($errfile, $errline, $frameData);
             }
-            $frames[] = $framedata;
+            $frames[] = $frameData;
 
-            $this->shift_method($frames);
+            $this->shiftMethod($frames);
 
             return $frames;
         } else {
@@ -690,9 +694,9 @@ class RollbarNotifier {
         }
     }
 
-    protected function build_server_data() {
-        if ($this->_server_data === null) {
-            $server_data = array();
+    protected function buildServerData() {
+        if ($this->_serverData === null) {
+            $serverData = array();
 
             if ($this->host === null) {
                 // PHP 5.3.0
@@ -702,51 +706,51 @@ class RollbarNotifier {
                     $this->host = php_uname('n');
                 }
             }
-            $server_data['host'] = $this->host;
-            $server_data['argv'] = isset($_SERVER['argv']) ? $_SERVER['argv'] : null;
+            $serverData['host'] = $this->host;
+            $serverData['argv'] = isset($_SERVER['argv']) ? $_SERVER['argv'] : null;
 
             if ($this->branch) {
-                $server_data['branch'] = $this->branch;
+                $serverData['branch'] = $this->branch;
             }
             if ($this->root) {
-                $server_data['root'] = $this->root;
+                $serverData['root'] = $this->root;
             }
-            $this->_server_data = $server_data;
+            $this->_serverData = $serverData;
         }
-        return $this->_server_data;
+        return $this->_serverData;
     }
 
-    protected function build_person_data() {
+    protected function buildPersonData() {
         // return cached value if non-null
         // it *is* possible for it to really be null (i.e. user is not logged in)
         // but we'll keep trying anyway until we get a logged-in user value.
-        if ($this->_person_data == null) {
+        if ($this->_personData == null) {
             // first priority: try to use $this->person
             if ($this->person && is_array($this->person)) {
                 if (isset($this->person['id'])) {
-                    $this->_person_data = $this->person;
-                    return $this->_person_data;
+                    $this->_personData = $this->person;
+                    return $this->_personData;
                 }
             }
 
             // second priority: try to use $this->person_fn
-            if ($this->person_fn && is_callable($this->person_fn)) {
-                $data = @call_user_func($this->person_fn);
+            if ($this->personFn && is_callable($this->personFn)) {
+                $data = @call_user_func($this->personFn);
                 if (isset($data['id'])) {
-                    $this->_person_data = $data;
-                    return $this->_person_data;
+                    $this->_personData = $data;
+                    return $this->_personData;
                 }
             }
         } else {
-            return $this->_person_data;
+            return $this->_personData;
         }
 
         return null;
     }
 
-    protected function build_base_data($level = Level::ERROR) {
-        if (null === $this->_php_context) {
-            $this->_php_context = $this->get_php_context();
+    protected function buildBaseData($level = Level::ERROR) {
+        if (null === $this->_phpContext) {
+            $this->_phpContext = $this->getPhpContext();
         }
 
         $data = array(
@@ -755,7 +759,7 @@ class RollbarNotifier {
             'level' => $level,
             'language' => 'php',
             'framework' => 'php',
-            'php_context' => $this->_php_context,
+            'php_context' => $this->_phpContext,
             'notifier' => array(
                 'name' => 'rollbar-php',
                 'version' => self::VERSION
@@ -763,34 +767,34 @@ class RollbarNotifier {
             'uuid' => $this->uuid4()
         );
 
-        if ($this->code_version) {
-            $data['code_version'] = $this->code_version;
+        if ($this->codeVersion) {
+            $data['code_version'] = $this->codeVersion;
         }
 
         return $data;
     }
 
-    protected function build_payload($data) {
+    protected function buildPayload($data) {
         $payload = array(
             'data' => $data
         );
 
-        if ($this->access_token) {
-            $payload['access_token'] = $this->access_token;
+        if ($this->accessToken) {
+            $payload['access_token'] = $this->accessToken;
         }
 
         return $payload;
     }
 
-    protected function send_payload($payload) {
+    protected function sendPayload($payload) {
         if ($this->batched) {
-            if ($this->queueSize() >= $this->batch_size) {
+            if ($this->queueSize() >= $this->batchSize) {
                 // flush queue before adding payload to queue
                 $this->flush();
             }
             $this->_queue[] = $payload;
         } else {
-            $this->_send_payload($payload);
+            $this->_sendPayload($payload);
         }
     }
 
@@ -798,28 +802,28 @@ class RollbarNotifier {
      * Sends a single payload to the /item endpoint.
      * $payload - php array
      */
-    protected function _send_payload($payload) {
+    protected function _sendPayload($payload) {
         if ($this->handler == 'agent') {
-            $this->_send_payload_agent($payload);
+            $this->_sendPayloadAgent($payload);
         } else {
-            $this->_send_payload_blocking($payload);
+            $this->_sendPayloadBlocking($payload);
         }
     }
 
-    protected function _send_payload_blocking($payload) {
-        $this->log_info("Sending payload");
-        $access_token = $payload['access_token'];
-        $post_data = json_encode($payload);
-        $this->make_api_call('item', $access_token, $post_data);
+    protected function _sendPayloadBlocking($payload) {
+        $this->logInfo('Sending payload');
+        $accessToken = $payload['access_token'];
+        $postData = json_encode($payload);
+        $this->makeApiCall('item', $accessToken, $postData);
     }
 
-    protected function _send_payload_agent($payload) {
+    protected function _sendPayloadAgent($payload) {
         // Only open this the first time
-        if (empty($this->_agent_log)) {
-            $this->load_agent_file();
+        if (empty($this->_agentLog)) {
+            $this->loadAgentFile();
         }
-        $this->log_info("Writing payload to file");
-        fwrite($this->_agent_log, json_encode($payload) . "\n");
+        $this->logInfo('Writing payload to file');
+        fwrite($this->_agentLog, json_encode($payload) . "\n");
     }
 
     /**
@@ -827,50 +831,50 @@ class RollbarNotifier {
      * A batch is just an array of standalone payloads.
      * $batch - php array of payloads
      */
-    protected function send_batch($batch) {
+    protected function sendBatch($batch) {
         if ($this->handler == 'agent') {
-            $this->send_batch_agent($batch);
+            $this->sendBatchAgent($batch);
         } else {
-            $this->send_batch_blocking($batch);
+            $this->sendBatchBlocking($batch);
         }
     }
 
-    protected function send_batch_agent($batch) {
-        $this->log_info("Writing batch to file");
+    protected function sendBatchAgent($batch) {
+        $this->logInfo('Writing batch to file');
 
         // Only open this the first time
-        if (empty($this->_agent_log)) {
-            $this->load_agent_file();
+        if (empty($this->_agentLog)) {
+            $this->loadAgentFile();
         }
 
         foreach ($batch as $item) {
-            fwrite($this->_agent_log, json_encode($item) . "\n");
+            fwrite($this->_agentLog, json_encode($item) . "\n");
         }
     }
 
-    protected function send_batch_blocking($batch) {
-        $this->log_info("Sending batch");
-        $access_token = $batch[0]['access_token'];
-        $post_data = json_encode($batch);
-        $this->make_api_call('item_batch', $access_token, $post_data);
+    protected function sendBatchBlocking($batch) {
+        $this->logInfo('Sending batch');
+        $accessToken = $batch[0]['access_token'];
+        $postData = json_encode($batch);
+        $this->makeApiCall('item_batch', $accessToken, $postData);
     }
 
-    protected function get_php_context() {
+    protected function getPhpContext() {
         return php_sapi_name() === 'cli' || defined('STDIN') ? 'cli' : 'http';
     }
 
-    protected function make_api_call($action, $access_token, $post_data) {
-        $url = $this->base_api_url . $action . '/';
+    protected function makeApiCall($action, $accessToken, $postData) {
+        $url = $this->baseApiUrl . $action . '/';
 
         $ch = curl_init();
         curl_setopt($ch, CURLOPT_URL, $url);
         curl_setopt($ch, CURLOPT_POST, true);
-        curl_setopt($ch, CURLOPT_POSTFIELDS, $post_data);
+        curl_setopt($ch, CURLOPT_POSTFIELDS, $postData);
         curl_setopt($ch, CURLOPT_VERBOSE, false);
         curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
         curl_setopt($ch, CURLOPT_TIMEOUT, $this->timeout);
-        curl_setopt($ch, CURLOPT_HTTPHEADER, array('X-Rollbar-Access-Token: ' . $access_token));
+        curl_setopt($ch, CURLOPT_HTTPHEADER, array('X-Rollbar-Access-Token: ' . $accessToken));
 
         if ($this->proxy) {
             $proxy = is_array($this->proxy) ? $this->proxy : array('address' => $this->proxy);
@@ -885,38 +889,38 @@ class RollbarNotifier {
             }
         }
 
-        if ($this->_curl_ipresolve_supported) {
+        if ($this->_curlIpResolveSupported) {
             curl_setopt($ch, CURLOPT_IPRESOLVE, CURL_IPRESOLVE_V4);
         }
 
         $result = curl_exec($ch);
-        $status_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $statusCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
         curl_close($ch);
 
-        if ($status_code != 200) {
-            $this->log_warning('Got unexpected status code from Rollbar API ' . $action .
-                ': ' .$status_code);
-            $this->log_warning('Output: ' .$result);
+        if ($statusCode != 200) {
+            $this->logWarning('Got unexpected status code from Rollbar API ' . $action . ': ' .$statusCode);
+            $this->logWarning('Output: ' .$result);
         } else {
-            $this->log_info('Success');
+            $this->logInfo('Success');
         }
     }
 
     /* Logging */
 
-    protected function log_info($msg) {
-        $this->log_message("INFO", $msg);
+    protected function logInfo($msg) {
+        $this->logMessage('INFO', $msg);
     }
 
-    protected function log_warning($msg) {
-        $this->log_message("WARNING", $msg);
+    protected function logWarning($msg) {
+        $this->logMessage('WARNING', $msg);
     }
 
-    protected function log_error($msg) {
-        $this->log_message("ERROR", $msg);
+    protected function logError($msg) {
+        $this->logMessage('ERROR', $msg);
     }
 
-    protected function log_message($level, $msg) {
+    protected function logMessage($level, $msg) {
+        error_log($msg);
         if ($this->logger !== null) {
             $this->logger->log($level, $msg);
         }
@@ -946,28 +950,30 @@ class RollbarNotifier {
         );
     }
 
-    protected function load_agent_file() {
-        $this->_agent_log = fopen($this->agent_log_location . '/rollbar-relay.' . getmypid() . '.' . microtime(true) . '.rollbar', 'a');
+    protected function loadAgentFile() {
+        $this->_agentLog = fopen($this->agentLogLocation . '/rollbar-relay.' . getmypid() . '.' . microtime(true) . '.rollbar', 'a');
     }
 
-    protected function add_frame_code_context($file, $line, array &$framedata) {
-        $source = $this->get_source_file_reader()->read_as_array($file);
+    protected function addFrameCodeContext($file, $line, array &$frameData) {
+        $source = $this->getSourceFileReader()->readAsArray($file);
         if (is_array($source)) {
             $source = str_replace(array("\n", "\t", "\r"), '', $source);
             $total = count($source);
             $line = $line - 1;
-            $framedata['code'] = $source[$line];
+            $frameData['code'] = $source[$line];
             $offset = 6;
             $min = max($line - $offset, 0);
             if ($min !== $line) {
-                $framedata['context']['pre'] = array_slice($source, $min, $line - $min);
+                $frameData['context']['pre'] = array_slice($source, $min, $line - $min);
             }
             $max = min($line + $offset, $total);
             if ($max !== $line) {
-                $framedata['context']['post'] = array_slice($source, $line + 1, $max - $line);
+                $frameData['context']['post'] = array_slice($source, $line + 1, $max - $line);
             }
         }
     }
 
-    protected function get_source_file_reader() { return $this->_source_file_reader; }
+    protected function getSourceFileReader() {
+        return $this->_sourceFileReader;
+    }
 }

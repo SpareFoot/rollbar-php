@@ -1,5 +1,4 @@
 <?php
-
 namespace Rollbar;
 
 abstract class Level {

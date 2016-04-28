@@ -1,5 +1,4 @@
 <?php
-
 namespace Rollbar;
 
 /**
@@ -11,10 +10,10 @@ class Rollbar {
     /** @var RollbarNotifier */
     public static $instance = null;
 
-    public static function init($config = array(), $set_exception_handler = true, $set_error_handler = true, $report_fatal_errors = true) {
+    public static function init($config = array(), $setExceptionHandler = true, $setErrorHandler = true, $reportFatalErrors = true) {
         // Heroku support
         // Use env vars for configuration, if set
-        if (isset($_ENV['ROLLBAR_ACCESS_TOKEN']) && !isset($config['access_token'])) {
+        if (isset($_ENV['ROLLBAR_ACCESS_TOKEN']) && !isset($config['accessToken'])) {
             $config['access_token'] = $_ENV['ROLLBAR_ACCESS_TOKEN'];
         }
         if (isset($_ENV['ROLLBAR_ENDPOINT']) && !isset($config['endpoint'])) {
@@ -26,14 +25,14 @@ class Rollbar {
 
         self::$instance = new RollbarNotifier($config);
 
-        if ($set_exception_handler) {
-            set_exception_handler('Rollbar::report_exception');
+        if ($setExceptionHandler) {
+            set_exception_handler('Rollbar::reportException');
         }
-        if ($set_error_handler) {
-            set_error_handler('Rollbar::report_php_error');
+        if ($setErrorHandler) {
+            set_error_handler('Rollbar::reportPhpError');
         }
-        if ($report_fatal_errors) {
-            register_shutdown_function('Rollbar::report_fatal_error');
+        if ($reportFatalErrors) {
+            register_shutdown_function('Rollbar::reportFatalError');
         }
 
         if (self::$instance->batched) {
@@ -41,28 +40,28 @@ class Rollbar {
         }
     }
 
-    public static function report_exception($exc, $extra_data = null, $payload_data = null) {
+    public static function reportException($exc, $extraData = null, $payloadData = null) {
         if (self::$instance == null) {
             return;
         }
-        return self::$instance->report_exception($exc, $extra_data, $payload_data);
+        return self::$instance->reportException($exc, $extraData, $payloadData);
     }
 
-    public static function report_message($message, $level = Level::ERROR, $extra_data = null, $payload_data = null) {
+    public static function reportMessage($message, $level = Level::ERROR, $extraData = null, $payloadData = null) {
         if (self::$instance == null) {
             return;
         }
-        return self::$instance->report_message($message, $level, $extra_data, $payload_data);
+        return self::$instance->reportMessage($message, $level, $extraData, $payloadData);
     }
 
-    public static function report_fatal_error() {
+    public static function reportFatalError() {
         // Catch any fatal errors that are causing the shutdown
-        $last_error = error_get_last();
-        if (!is_null($last_error)) {
-            switch ($last_error['type']) {
+        $lastError = error_get_last();
+        if (!is_null($lastError)) {
+            switch ($lastError['type']) {
                 case E_PARSE:
                 case E_ERROR:
-                    self::$instance->report_php_error($last_error['type'], $last_error['message'], $last_error['file'], $last_error['line']);
+                    self::$instance->reportPhpError($lastError['type'], $lastError['message'], $lastError['file'], $lastError['line']);
                     break;
             }
         }
@@ -71,7 +70,7 @@ class Rollbar {
     // This function must return false so that the default php error handler runs
     public static function report_php_error($errno, $errstr, $errfile, $errline) {
         if (self::$instance != null) {
-            self::$instance->report_php_error($errno, $errstr, $errfile, $errline);
+            self::$instance->reportPhpError($errno, $errstr, $errfile, $errline);
         }
         return false;
     }
@@ -81,25 +80,10 @@ class Rollbar {
     }
 }
 
-
-
-
+/*
 interface iRollbarLogger {
     public function log($level, $msg);
 }
 
 class Ratchetio extends Rollbar {}
-
-interface iSourceFileReader {
-
-    /**
-     * @param string $file_path
-     * @return string[]
-     */
-    public function read_as_array($file_path);
-}
-
-class SourceFileReader implements iSourceFileReader {
-
-    public function read_as_array($file_path) { return file($file_path); }
-}
+*/
