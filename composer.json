@@ -1,6 +1,7 @@
 {
   "name": "SpareFoot/rollbar-php",
   "description": "Monitors errors and exceptions and reports them to Rollbar",
+  "version": "0.16.0",
   "type": "library",
   "keywords": ["logging", "debugging", "monitoring", "errors", "exceptions"],
   "license": "MIT",
