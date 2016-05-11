@@ -485,7 +485,7 @@ class RollbarNotifier {
             return $headers;
         } else {
             // serializes to emtpy json object
-            return new stdClass;
+            return new \stdClass;
         }
     }
 
