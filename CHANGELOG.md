@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.18.2
+
+- removed type hinting from RollbarException
+
+## 0.18.1
+
+- added configuration switch for disabling utf 8 sanitization
 
 ## 0.18.0
 
