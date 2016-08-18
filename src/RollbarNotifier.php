@@ -12,7 +12,7 @@ if (!defined('ROLLBAR_INCLUDED_ERRNO_BITMASK')) {
 }
 
 class RollbarNotifier {
-    const VERSION = '0.15.0';
+    const VERSION = '0.18.0';
 
     // required
     public $accessToken = '';
@@ -358,7 +358,7 @@ class RollbarNotifier {
         $payload = $this->buildPayload($data);
 
         // Determine whether to send the request to the API
-        $exception = new ErrorException($errorClass, 0, $errno, $errfile, $errline);
+        $exception = new \ErrorException($errorClass, 0, $errno, $errfile, $errline);
         if ($this->_shouldIgnore(true, new RollbarException($exception->getMessage(), $exception), $payload)) {
             return;
         }
