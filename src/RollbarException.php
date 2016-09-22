@@ -5,7 +5,7 @@ class RollbarException {
     private $message;
     private $exception;
 
-    public function __construct($message, \Exception $exception = null) {
+    public function __construct($message, \Throwable $exception = null) {
         $this->message = $message;
         $this->exception = $exception;
     }
