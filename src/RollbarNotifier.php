@@ -48,7 +48,7 @@ class RollbarNotifier {
 
     private $configKeys = [
         'accessToken', 'agentLocation', 'baseApiUrl', 'batchSize', 'batched', 'branch', 'captureErrorBacktraces',
-        'checkIgnore', 'codeVersion', 'environment', 'errorSampleRates', 'handler', 'host', 'includeErrNo',
+        'checkIgnore', 'codeVersion', 'environment', 'errorSampleRates', 'handler', 'host', 'includedErrno',
         'includeErrorCodeContext', 'includeExceptionCodeContext', 'logger', 'person', 'personFn', 'proxy', 'root',
         'scrubFields', 'shiftFunction', 'timeout', 'reportSuppressed', 'useErrorReporting'
     ];
