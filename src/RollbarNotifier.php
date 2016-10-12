@@ -112,6 +112,19 @@ class RollbarNotifier {
         $this->_mtRandmax = mt_getrandmax();
     }
 
+    // Method alias for backwards compatibility
+    public function report_exception($exc, $context = null, $payload = null) {
+        $this->reportException($exc, $context, $payload);
+    }
+
+    public function report_message($message, $level = Level::ERROR, $context = null, $payload = null) {
+        $this->reportMessage($message, $level, $context, $payload);
+    }
+
+    public function report_php_error($errno, $errstr, $errfile, $errline) {
+        $this->reportPhpError($errno, $errstr, $errfile, $errline);
+    }
+
     public function reportException($exc, $extraData = null, $payloadData = null) {
         try {
             if (!is_a($exc, BASE_EXCEPTION)) {
